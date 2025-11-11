@@ -16,7 +16,7 @@ class Camera:
         self.cap = cv2.VideoCapture(CAMERA_URL)
         self.lock = threading.Lock()
         self.heatmap = None
-        self.alpha = 0.95  # коэффициент затухания тепловой карты
+        self.alpha = 0.1  # коэффициент затухания тепловой карты
     
     def update_heatmap(self, frame, detections):
         if self.heatmap is None:
@@ -80,10 +80,6 @@ class Camera:
         
         # Применяем тепловую карту к кадру
         frame_with_heatmap = self.apply_heatmap(frame)
-        
-        # Отображаем количество людей
-        cv2.putText(frame_with_heatmap, f"People: {len(detections)}", 
-                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
         
         return frame_with_heatmap
     
