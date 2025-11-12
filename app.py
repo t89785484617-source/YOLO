@@ -210,12 +210,3 @@ def statistics():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8001, debug=False)
-
-
-
-
-
-
-    # Переработал логику отображения истории передвижения
-
-    #dsfsdffffвыв
