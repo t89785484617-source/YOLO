@@ -29,6 +29,7 @@ class Camera:
         self.heatmap_start_time = datetime.datetime.now()
         self.last_save_time = time.time()
         self.save_interval = 300  # 5 минут в секундах
+        self.last_frame_with_heatmap = None
         
         # Загружаем последнюю тепловую карту при старте
         self.load_heatmap()
@@ -59,6 +60,7 @@ class Camera:
                 data_files = glob.glob(os.path.join(day_path, "heatmap_data_*.npz"))
                 image_files = glob.glob(os.path.join(day_path, "heatmap_*.png"))
                 meta_files = glob.glob(os.path.join(day_path, "heatmap_meta_*.json"))
+                overlay_files = glob.glob(os.path.join(day_path, "overlay_*.jpg"))
                 
                 # Если есть файлы, оставляем только последний набор
                 if data_files:
@@ -66,13 +68,14 @@ class Camera:
                     data_files.sort(reverse=True)
                     image_files.sort(reverse=True)
                     meta_files.sort(reverse=True)
+                    overlay_files.sort(reverse=True)
                     
                     # Оставляем только последний data файл и соответствующие ему файлы
                     latest_data = data_files[0]
                     timestamp = latest_data.split('_')[-1].replace('.npz', '')
                     
                     # Удаляем все файлы, кроме последнего набора
-                    for file_list in [data_files, image_files, meta_files]:
+                    for file_list in [data_files, image_files, meta_files, overlay_files]:
                         for file_path in file_list:
                             if timestamp not in file_path:
                                 try:
@@ -116,6 +119,47 @@ class Camera:
                 if stats:
                     with open(meta_filename, 'w') as f:
                         json.dump(stats, f, indent=2)
+                
+                # Сохраняем изображение с наложенной тепловой картой (если есть последний кадр)
+                if self.last_frame_with_heatmap is not None:
+                    overlay_filename = os.path.join(today_folder, f"overlay_{timestamp}.jpg")
+                    
+                    # Добавляем дополнительную информацию на изображение
+                    overlay_with_info = self.last_frame_with_heatmap.copy()
+                    
+                    # Добавляем статистику в угол изображения
+                    stats_text = [
+                        f"Time: {stats['total_presence_detailed']}",
+                        f"Total Activity: {stats['total_activity_points']:.0f}",
+                        f"Max Activity: {stats['max_activity']:.0f}",
+                        f"Collection: {stats['duration_hours']:.1f}h"
+                    ]
+                    
+                    # Рисуем полупрозрачный фон для текста
+                    overlay_height = overlay_with_info.shape[0]
+                    text_bg_height = len(stats_text) * 30 + 20
+                    cv2.rectangle(overlay_with_info, 
+                                (10, overlay_height - text_bg_height - 10),
+                                (300, overlay_height - 10),
+                                (0, 0, 0), -1)
+                    cv2.rectangle(overlay_with_info, 
+                                (10, overlay_height - text_bg_height - 10),
+                                (300, overlay_height - 10),
+                                (255, 255, 255), 1)
+                    
+                    # Добавляем текст статистики
+                    for i, text in enumerate(stats_text):
+                        y_position = overlay_height - text_bg_height + (i + 1) * 25
+                        cv2.putText(overlay_with_info, text, (20, y_position),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                    
+                    # Добавляем временную метку
+                    date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    cv2.putText(overlay_with_info, date_str, (10, 30),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                    
+                    cv2.imwrite(overlay_filename, overlay_with_info, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                    print(f"Overlay image saved: {overlay_filename}")
                 
                 print(f"Heatmap saved: {timestamp} in folder {os.path.basename(today_folder)}")
                 
@@ -213,6 +257,9 @@ class Camera:
         info_text = f"Time: {elapsed_time.seconds//3600:02d}:{(elapsed_time.seconds%3600)//60:02d} | Activity: {total_heat:.0f}"
         cv2.putText(overlay, info_text, (10, 30), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        # Сохраняем кадр с наложенной тепловой картой для возможного сохранения
+        self.last_frame_with_heatmap = overlay.copy()
         
         return overlay
     
