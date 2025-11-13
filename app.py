@@ -9,6 +9,7 @@ import time
 import os
 import json
 import atexit
+import glob
 
 app = flask.Flask(__name__)
 
@@ -31,23 +32,77 @@ class Camera:
         
         # Загружаем последнюю тепловую карту при старте
         self.load_heatmap()
-        
+    
+    def get_today_folder(self):
+        """Возвращает путь к папке текущего дня"""
+        today = datetime.datetime.now().strftime("%Y%m%d")
+        today_folder = os.path.join(HEATMAP_SAVE_DIR, today)
+        os.makedirs(today_folder, exist_ok=True)
+        return today_folder
+    
+    def cleanup_old_heatmaps(self, current_day_folder):
+        """Удаляет старые тепловые карты, оставляя только последнюю за каждый день"""
+        try:
+            # Получаем все папки с датами
+            day_folders = [f for f in os.listdir(HEATMAP_SAVE_DIR) 
+                          if os.path.isdir(os.path.join(HEATMAP_SAVE_DIR, f)) 
+                          and f.isdigit() and len(f) == 8]
+            
+            for day_folder in day_folders:
+                day_path = os.path.join(HEATMAP_SAVE_DIR, day_folder)
+                
+                # Пропускаем текущий день
+                if day_path == current_day_folder:
+                    continue
+                
+                # Ищем все файлы тепловых карт в папке дня
+                data_files = glob.glob(os.path.join(day_path, "heatmap_data_*.npz"))
+                image_files = glob.glob(os.path.join(day_path, "heatmap_*.png"))
+                meta_files = glob.glob(os.path.join(day_path, "heatmap_meta_*.json"))
+                
+                # Если есть файлы, оставляем только последний набор
+                if data_files:
+                    # Сортируем по времени создания (последний сначала)
+                    data_files.sort(reverse=True)
+                    image_files.sort(reverse=True)
+                    meta_files.sort(reverse=True)
+                    
+                    # Оставляем только последний data файл и соответствующие ему файлы
+                    latest_data = data_files[0]
+                    timestamp = latest_data.split('_')[-1].replace('.npz', '')
+                    
+                    # Удаляем все файлы, кроме последнего набора
+                    for file_list in [data_files, image_files, meta_files]:
+                        for file_path in file_list:
+                            if timestamp not in file_path:
+                                try:
+                                    os.remove(file_path)
+                                    print(f"Removed old heatmap: {os.path.basename(file_path)}")
+                                except Exception as e:
+                                    print(f"Error removing {file_path}: {e}")
+                    
+                    print(f"Cleaned up old heatmaps for day {day_folder}, kept latest: {timestamp}")
+                
+        except Exception as e:
+            print(f"Error cleaning up old heatmaps: {e}")
+    
     def save_heatmap(self):
         """Сохраняет тепловую карту в файл"""
         if self.heatmap is not None and np.sum(self.heatmap) > 0:
             try:
-                # Создаем имя файла с временной меткой
+                # Получаем папку для текущего дня
+                today_folder = self.get_today_folder()
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 
                 # Сохраняем тепловую карту как изображение
                 if np.max(self.heatmap) > 0:
                     heatmap_norm = (self.heatmap / np.max(self.heatmap) * 255).astype(np.uint8)
                     heatmap_colored = cv2.applyColorMap(heatmap_norm, cv2.COLORMAP_JET)
-                    image_filename = os.path.join(HEATMAP_SAVE_DIR, f"heatmap_{timestamp}.png")
+                    image_filename = os.path.join(today_folder, f"heatmap_{timestamp}.png")
                     cv2.imwrite(image_filename, heatmap_colored)
                 
                 # Сохраняем данные тепловой карты в numpy формате
-                data_filename = os.path.join(HEATMAP_SAVE_DIR, f"heatmap_data_{timestamp}.npz")
+                data_filename = os.path.join(today_folder, f"heatmap_data_{timestamp}.npz")
                 np.savez_compressed(
                     data_filename,
                     heatmap=self.heatmap,
@@ -56,13 +111,16 @@ class Camera:
                 )
                 
                 # Сохраняем метаданные
-                meta_filename = os.path.join(HEATMAP_SAVE_DIR, f"heatmap_meta_{timestamp}.json")
+                meta_filename = os.path.join(today_folder, f"heatmap_meta_{timestamp}.json")
                 stats = self.get_heatmap_statistics()
                 if stats:
                     with open(meta_filename, 'w') as f:
                         json.dump(stats, f, indent=2)
                 
-                print(f"Heatmap saved: {timestamp}")
+                print(f"Heatmap saved: {timestamp} in folder {os.path.basename(today_folder)}")
+                
+                # Очищаем старые тепловые карты (оставляем только последнюю за каждый день)
+                self.cleanup_old_heatmaps(today_folder)
                 
             except Exception as e:
                 print(f"Error saving heatmap: {e}")
@@ -70,21 +128,34 @@ class Camera:
     def load_heatmap(self):
         """Загружает последнюю сохраненную тепловую карту"""
         try:
-            # Ищем последний сохраненный файл с данными
-            heatmap_files = [f for f in os.listdir(HEATMAP_SAVE_DIR) if f.startswith("heatmap_data_")]
+            # Ищем все папки с датами
+            day_folders = [f for f in os.listdir(HEATMAP_SAVE_DIR) 
+                          if os.path.isdir(os.path.join(HEATMAP_SAVE_DIR, f)) 
+                          and f.isdigit() and len(f) == 8]
+            
+            if not day_folders:
+                return
+            
+            # Сортируем папки по дате (последняя сначала)
+            day_folders.sort(reverse=True)
+            
+            # Ищем последний data файл в самой свежей папке
+            latest_folder = os.path.join(HEATMAP_SAVE_DIR, day_folders[0])
+            heatmap_files = [f for f in os.listdir(latest_folder) if f.startswith("heatmap_data_")]
+            
             if not heatmap_files:
                 return
             
-            # Берем самый свежий файл
+            # Берем самый свежий файл в папке
             latest_file = sorted(heatmap_files)[-1]
-            filepath = os.path.join(HEATMAP_SAVE_DIR, latest_file)
+            filepath = os.path.join(latest_folder, latest_file)
             
             # Загружаем данные
             data = np.load(filepath)
             self.heatmap = data['heatmap']
             self.heatmap_start_time = datetime.datetime.fromisoformat(data['start_time'])
             
-            print(f"Heatmap loaded from: {latest_file}")
+            print(f"Heatmap loaded from: {os.path.join(day_folders[0], latest_file)}")
             
         except Exception as e:
             print(f"Error loading heatmap: {e}")
