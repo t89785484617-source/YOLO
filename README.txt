@@ -1,7 +1,7 @@
 
 Главные настройки
 python
-CAMERA_URL = 'rtsp://admin:Jaquio@192.168.105.8:554/live/main'  # URL камеры
+CAMERA_URL = 'rtsp://admin:admin@192.168.105.8:554/live/main'  # URL камеры
 model = YOLO('yolov8n.pt')  # Модель YOLO для детекции
 target_classes = [0]  # Класс "человек" в COCO dataset
 1. Класс Camera - основной обработчик
